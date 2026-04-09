@@ -1,27 +1,104 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Login</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login - Tmail Personal</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .login-card {
+      width: 100%;
+      max-width: 420px;
+      padding: 32px;
+      border-radius: 16px;
+      background: rgba(20, 20, 20, 0.9);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      text-align: center;
+    }
+
+    .login-card h1 {
+      margin-bottom: 10px;
+    }
+
+    .login-card p {
+      margin-bottom: 20px;
+      opacity: 0.8;
+    }
+
+    .login-card input {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.04);
+      color: white;
+      outline: none;
+      margin-bottom: 14px;
+      box-sizing: border-box;
+    }
+
+    .login-card button {
+      width: 100%;
+      padding: 14px 16px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .error-text {
+      margin-top: 12px;
+      color: #ff6b6b;
+      min-height: 20px;
+      font-size: 14px;
+    }
+  </style>
 </head>
-<body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;">
-  <div>
-    <h2>Enter Password</h2>
-    <input type="password" id="password" placeholder="Password">
-    <button onclick="login()">Login</button>
-    <p id="error" style="color:red;"></p>
+<body>
+  <div class="login-card">
+    <h1><i class="fas fa-lock"></i> Protected Access</h1>
+    <p>Enter password to open this website</p>
+
+    <input
+      type="password"
+      id="passwordInput"
+      placeholder="Enter password"
+      autocomplete="current-password"
+    />
+
+    <button id="loginBtn" class="btn-primary">Open Website</button>
+    <div class="error-text" id="errorText"></div>
   </div>
 
-<script>
-function login() {
-  const pass = document.getElementById("password").value;
+  <script>
+    const SITE_PASSWORD = "Ngapain@220219";
 
-  if (pass === "Ngapain@220219") {
-    document.cookie = "auth=true; path=/";
-    window.location.href = "/";
-  } else {
-    document.getElementById("error").innerText = "Wrong password";
-  }
-}
-</script>
+    function doLogin() {
+      const password = document.getElementById("passwordInput").value;
+      const errorText = document.getElementById("errorText");
+
+      if (password === SITE_PASSWORD) {
+        document.cookie = "auth=true; path=/; max-age=86400; SameSite=Lax";
+        window.location.replace("/");
+      } else {
+        errorText.textContent = "Password salah";
+      }
+    }
+
+    document.getElementById("loginBtn").addEventListener("click", doLogin);
+
+    document.getElementById("passwordInput").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        doLogin();
+      }
+    });
+  </script>
 </body>
 </html>
