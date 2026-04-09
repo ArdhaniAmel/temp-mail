@@ -94,8 +94,11 @@ function formatDate(dateString) {
   }
 }
 
-function setExpiration() {
-  const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+function setExpiration(expiresAt = null) {
+  const expiry = expiresAt
+    ? new Date(expiresAt)
+    : new Date(Date.now() + 24 * 60 * 60 * 1000);
+
   expirationTime.textContent = formatDate(expiry.toISOString());
 }
 
@@ -110,35 +113,114 @@ function setActiveEmail(email) {
   setExpiration();
 }
 
-async function fetchJson(url) {
-  const res = await fetch(url, {
-    method: "GET",
-    headers: { Accept: "application/json" }
-  });
+async function fetchJson(url, options = {}) {
+  const res = await fetch(url, options);
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`HTTP ${res.status} ${text}`);
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
   }
 
-  return await res.json();
+  if (!res.ok) {
+    const message =
+      data?.error ||
+      data?.message ||
+      `HTTP ${res.status}`;
+    throw new Error(message);
+  }
+
+  return data;
 }
 
 async function generateRandomEmail() {
-  const data = await fetchJson(`${API_BASE}/generate-email`);
-  if (!data.email) throw new Error("API did not return email");
-  return data.email;
+  const domain = domainSelect.value || DEFAULT_DOMAIN;
+
+  const data = await fetchJson(`${API_BASE}/email/generate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json"
+    },
+    body: JSON.stringify({ domain })
+  });
+
+  if (!data.success || !data.email) {
+    throw new Error(data?.error || "API did not return email");
+  }
+
+  return data;
 }
 
-function renderEmails(emails) {
+async function loadInbox(email) {
+  if (!email || !isValidTempAddress(email)) {
+    emailsList.innerHTML = "";
+    showNoEmails(true);
+    totalEmails.textContent = "0";
+    unreadEmails.textContent = "0";
+    emailCount.textContent = "0";
+    return;
+  }
+
+  try {
+    setButtonState(true);
+    showLoading(true);
+    showNoEmails(false);
+
+    const inboxData = await fetchJson(
+      `${API_BASE}/emails/${encodeURIComponent(email)}`,
+      {
+        method: "GET",
+        headers: { Accept: "application/json" }
+      }
+    );
+
+    const statsData = await fetchJson(
+      `${API_BASE}/stats/${encodeURIComponent(email)}`,
+      {
+        method: "GET",
+        headers: { Accept: "application/json" }
+      }
+    );
+
+    const emails = inboxData.emails || [];
+    const stats = statsData.stats || {
+      total_emails: emails.length,
+      unread_emails: emails.length
+    };
+
+    renderEmails(emails, stats);
+  } catch (err) {
+    console.error("Failed to load inbox:", err);
+    emailsList.innerHTML = `
+      <div class="email-item">
+        <div class="email-item-subject">Failed to load inbox</div>
+        <div class="email-item-body">
+          <pre>${escapeHtml(err.message || "Unknown error")}</pre>
+        </div>
+      </div>
+    `;
+    totalEmails.textContent = "0";
+    unreadEmails.textContent = "0";
+    emailCount.textContent = "0";
+  } finally {
+    showLoading(false);
+    setButtonState(false);
+  }
+}
+
+function renderEmails(emails, stats = null) {
   emailsList.innerHTML = "";
 
-  const total = Array.isArray(emails) ? emails.length : 0;
+  const total = stats?.total_emails ?? (Array.isArray(emails) ? emails.length : 0);
+  const unread = stats?.unread_emails ?? total;
+
   totalEmails.textContent = String(total);
-  unreadEmails.textContent = String(total);
+  unreadEmails.textContent = String(unread);
   emailCount.textContent = String(total);
 
-  if (!total) {
+  if (!emails || emails.length === 0) {
     showNoEmails(true);
     return;
   }
@@ -171,52 +253,20 @@ function renderEmails(emails) {
   });
 }
 
-async function loadInbox(email) {
-  if (!email || !isValidTempAddress(email)) {
-    emailsList.innerHTML = "";
-    showNoEmails(true);
-    totalEmails.textContent = "0";
-    unreadEmails.textContent = "0";
-    emailCount.textContent = "0";
-    return;
-  }
-
-  try {
-    setButtonState(true);
-    showLoading(true);
-    showNoEmails(false);
-
-    const data = await fetchJson(`${API_BASE}/inbox?email=${encodeURIComponent(email)}`);
-    renderEmails(data.emails || []);
-  } catch (err) {
-    console.error("Failed to load inbox:", err);
-    emailsList.innerHTML = `
-      <div class="email-item">
-        <div class="email-item-subject">Failed to load inbox</div>
-        <div class="email-item-body">
-          <pre>${escapeHtml(err.message || "Unknown error")}</pre>
-        </div>
-      </div>
-    `;
-    totalEmails.textContent = "0";
-    unreadEmails.textContent = "0";
-    emailCount.textContent = "0";
-  } finally {
-    showLoading(false);
-    setButtonState(false);
-  }
-}
-
 async function handleGenerateRandom() {
   try {
     setButtonState(true);
-    const email = await generateRandomEmail();
+
+    const result = await generateRandomEmail();
+    const email = result.email;
+
     setActiveEmail(email);
+    setExpiration(result.expires_at || null);
     await loadInbox(email);
     startAutoRefresh();
   } catch (err) {
     console.error(err);
-    alert("Failed to generate email.");
+    alert(`Failed to generate email: ${err.message}`);
   } finally {
     setButtonState(false);
   }
