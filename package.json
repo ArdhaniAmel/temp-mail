@@ -1,0 +1,13 @@
+{
+  "name": "pakasir-tempmail-vercel-cloudflare",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Temporary email app for Vercel frontend + Cloudflare Email Routing, Workers, and D1.",
+  "scripts": {
+    "dev": "python3 -m http.server 8080 --directory frontend",
+    "build": "echo 'Static frontend only'",
+    "cf:install": "cd cloudflare-worker && npm install",
+    "cf:dev": "cd cloudflare-worker && npm run dev",
+    "cf:deploy": "cd cloudflare-worker && npm run deploy"
+  }
+}
