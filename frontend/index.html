@@ -6,6 +6,16 @@
   <title>Tmail Personal</title>
   <link rel="stylesheet" href="style.css" />
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet" />
+
+  <script>
+    (function () {
+      const isAuth = document.cookie.split('; ').some(row => row === 'auth=true');
+
+      if (!isAuth) {
+        window.location.replace('/login');
+      }
+    })();
+  </script>
 </head>
 <body>
   <div class="container">
