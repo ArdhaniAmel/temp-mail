@@ -1,25 +1,42 @@
-const API_BASE = "https://mailapi.pakasir.dev/api";
+const API_BASE =
+  (window.APP_CONFIG && window.APP_CONFIG.apiBaseUrl)
+    ? window.APP_CONFIG.apiBaseUrl
+    : "https://mailapi.pakasir.dev/api";
+
 const DEFAULT_DOMAIN = "pakasir.dev";
 
-const emailInput = document.getElementById("email");
-const domainSelect = document.getElementById("domain");
-const generateBtn = document.getElementById("generateBtn");
-const checkBtn = document.getElementById("checkBtn");
-const refreshBtn = document.getElementById("refreshBtn");
-const copyBtn = document.getElementById("copyBtn");
+const currentEmailInput = document.getElementById("currentEmail");
+const customNameInput = document.getElementById("customNameInput");
+const domainSelect = document.getElementById("domainSelect");
 
-const inboxTitle = document.getElementById("inboxTitle");
-const inboxList = document.getElementById("inboxList");
-const totalCount = document.getElementById("totalCount");
-const unreadCount = document.getElementById("unreadCount");
-const expiresAt = document.getElementById("expiresAt");
+const generateBtn = document.getElementById("generateBtn");
+const createCustomBtn = document.getElementById("createCustomBtn");
+const checkEmailsBtn = document.getElementById("checkEmailsBtn");
+const copyBtn = document.getElementById("copyBtn");
+const refreshBtn = document.getElementById("refreshBtn");
+const refreshEmailsBtn = document.getElementById("refreshEmailsBtn");
+const autoRefreshBtn = document.getElementById("autoRefreshBtn");
+
+const emailInfo = document.getElementById("emailInfo");
+const expirationTime = document.getElementById("expirationTime");
 const emailCount = document.getElementById("emailCount");
 
-let currentEmail = "";
-let refreshInterval = null;
+const emailListSection = document.getElementById("emailListSection");
+const currentEmailAddress = document.getElementById("currentEmailAddress");
+const emailStats = document.getElementById("emailStats");
+const totalEmails = document.getElementById("totalEmails");
+const unreadEmails = document.getElementById("unreadEmails");
+
+const loadingEmails = document.getElementById("loadingEmails");
+const noEmails = document.getElementById("noEmails");
+const emailsList = document.getElementById("emailsList");
+
+let activeEmail = "";
+let autoRefreshTimer = null;
+let autoRefreshEnabled = true;
 
 function escapeHtml(str = "") {
-  return str
+  return String(str)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -29,11 +46,8 @@ function escapeHtml(str = "") {
 
 function normalizeEmailInput(value, selectedDomain = DEFAULT_DOMAIN) {
   const raw = (value || "").trim().toLowerCase();
-
   if (!raw) return "";
-
   if (raw.includes("@")) return raw;
-
   return `${raw}@${selectedDomain}`;
 }
 
@@ -43,100 +57,63 @@ function isValidTempAddress(email) {
 
 function getEmailFromPath() {
   const path = decodeURIComponent(window.location.pathname.replace(/^\/+/, "").trim());
-
   if (!path) return "";
-
-  if (isValidTempAddress(path)) {
-    return path.toLowerCase();
-  }
-
-  return "";
+  return isValidTempAddress(path) ? path.toLowerCase() : "";
 }
 
 function updateUrlForInbox(email) {
-  const cleanEmail = encodeURIComponent(email);
-  const newUrl = `${window.location.origin}/${cleanEmail}`;
-  window.history.replaceState({}, "", newUrl);
+  const encoded = encodeURIComponent(email);
+  window.history.replaceState({}, "", `${window.location.origin}/${encoded}`);
+}
+
+function setButtonState(disabled) {
+  [
+    generateBtn,
+    createCustomBtn,
+    checkEmailsBtn,
+    refreshBtn,
+    refreshEmailsBtn
+  ].forEach((btn) => {
+    if (btn) btn.disabled = disabled;
+  });
+}
+
+function showLoading(show) {
+  loadingEmails.style.display = show ? "block" : "none";
+}
+
+function showNoEmails(show) {
+  noEmails.style.display = show ? "block" : "none";
 }
 
 function formatDate(dateString) {
   try {
-    const d = new Date(dateString);
-    return d.toLocaleString();
+    return new Date(dateString).toLocaleString();
   } catch {
     return dateString || "-";
   }
 }
 
-function setLoadingState(isLoading) {
-  generateBtn.disabled = isLoading;
-  checkBtn.disabled = isLoading;
-
-  if (refreshBtn) refreshBtn.disabled = isLoading;
+function setExpiration() {
+  const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  expirationTime.textContent = formatDate(expiry.toISOString());
 }
 
 function setActiveEmail(email) {
-  currentEmail = email;
-  emailInput.value = email;
-  inboxTitle.textContent = `Inbox for ${email}`;
+  activeEmail = email;
+  currentEmailInput.value = email;
+  currentEmailAddress.textContent = email;
+  emailInfo.style.display = "flex";
+  emailListSection.style.display = "block";
+  emailStats.style.display = "flex";
   updateUrlForInbox(email);
-
-  const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  if (expiresAt) expiresAt.textContent = formatDate(expires.toISOString());
-}
-
-function renderEmptyInbox() {
-  inboxList.innerHTML = `
-    <div class="empty-state">
-      <p>No emails yet.</p>
-    </div>
-  `;
-  totalCount.textContent = "0";
-  unreadCount.textContent = "0";
-  emailCount.textContent = "0";
-}
-
-function renderEmails(emails) {
-  if (!Array.isArray(emails) || emails.length === 0) {
-    renderEmptyInbox();
-    return;
-  }
-
-  totalCount.textContent = String(emails.length);
-  unreadCount.textContent = String(emails.length);
-  emailCount.textContent = String(emails.length);
-
-  inboxList.innerHTML = emails
-    .map((mail) => {
-      const from = escapeHtml(mail.sender || "Unknown sender");
-      const subject = escapeHtml(mail.subject || "(No subject)");
-      const bodyText = escapeHtml(mail.body_text || "");
-      const receivedAt = formatDate(mail.received_at || "");
-
-      return `
-        <div class="email-card">
-          <div class="email-header">
-            <div>
-              <div class="email-from">${from}</div>
-              <div class="email-subject">${subject}</div>
-            </div>
-            <div class="email-date">${receivedAt}</div>
-          </div>
-          <div class="email-body">
-            <pre>${bodyText}</pre>
-          </div>
-        </div>
-      `;
-    })
-    .join("");
+  setExpiration();
 }
 
 async function fetchJson(url) {
   const res = await fetch(url, {
     method: "GET",
-    headers: {
-      "Accept": "application/json"
-    }
+    headers: { Accept: "application/json" }
   });
 
   if (!res.ok) {
@@ -144,87 +121,120 @@ async function fetchJson(url) {
     throw new Error(`HTTP ${res.status} ${text}`);
   }
 
-  return res.json();
-}
-
-async function loadInbox(email) {
-  if (!email || !isValidTempAddress(email)) {
-    renderEmptyInbox();
-    return;
-  }
-
-  try {
-    setLoadingState(true);
-
-    const url = `${API_BASE}/inbox?email=${encodeURIComponent(email)}`;
-    const data = await fetchJson(url);
-
-    renderEmails(data.emails || []);
-  } catch (err) {
-    console.error("Failed to load inbox:", err);
-    inboxList.innerHTML = `
-      <div class="empty-state">
-        <p>Failed to load inbox.</p>
-        <p style="opacity:.7;font-size:14px;">${escapeHtml(err.message || "Unknown error")}</p>
-      </div>
-    `;
-  } finally {
-    setLoadingState(false);
-  }
+  return await res.json();
 }
 
 async function generateRandomEmail() {
   const data = await fetchJson(`${API_BASE}/generate-email`);
-  if (!data.email) {
-    throw new Error("Email not returned by API");
-  }
+  if (!data.email) throw new Error("API did not return email");
   return data.email;
 }
 
-async function handleGenerateEmail() {
+function renderEmails(emails) {
+  emailsList.innerHTML = "";
+
+  const total = Array.isArray(emails) ? emails.length : 0;
+  totalEmails.textContent = String(total);
+  unreadEmails.textContent = String(total);
+  emailCount.textContent = String(total);
+
+  if (!total) {
+    showNoEmails(true);
+    return;
+  }
+
+  showNoEmails(false);
+
+  emails.forEach((mail) => {
+    const item = document.createElement("div");
+    item.className = "email-item";
+
+    const sender = escapeHtml(mail.sender || "Unknown sender");
+    const subject = escapeHtml(mail.subject || "(No subject)");
+    const body = escapeHtml(mail.body_text || "");
+    const received = formatDate(mail.received_at || "");
+
+    item.innerHTML = `
+      <div class="email-item-header">
+        <div class="email-item-main">
+          <div class="email-item-from">${sender}</div>
+          <div class="email-item-subject">${subject}</div>
+        </div>
+        <div class="email-item-date">${received}</div>
+      </div>
+      <div class="email-item-body">
+        <pre>${body}</pre>
+      </div>
+    `;
+
+    emailsList.appendChild(item);
+  });
+}
+
+async function loadInbox(email) {
+  if (!email || !isValidTempAddress(email)) {
+    emailsList.innerHTML = "";
+    showNoEmails(true);
+    totalEmails.textContent = "0";
+    unreadEmails.textContent = "0";
+    emailCount.textContent = "0";
+    return;
+  }
+
   try {
-    setLoadingState(true);
+    setButtonState(true);
+    showLoading(true);
+    showNoEmails(false);
 
-    const domain = domainSelect?.value || DEFAULT_DOMAIN;
-    const typed = emailInput.value.trim();
+    const data = await fetchJson(`${API_BASE}/inbox?email=${encodeURIComponent(email)}`);
+    renderEmails(data.emails || []);
+  } catch (err) {
+    console.error("Failed to load inbox:", err);
+    emailsList.innerHTML = `
+      <div class="email-item">
+        <div class="email-item-subject">Failed to load inbox</div>
+        <div class="email-item-body">
+          <pre>${escapeHtml(err.message || "Unknown error")}</pre>
+        </div>
+      </div>
+    `;
+    totalEmails.textContent = "0";
+    unreadEmails.textContent = "0";
+    emailCount.textContent = "0";
+  } finally {
+    showLoading(false);
+    setButtonState(false);
+  }
+}
 
-    let email = "";
-
-    if (typed) {
-      email = normalizeEmailInput(typed, domain);
-
-      if (!isValidTempAddress(email)) {
-        alert("Format email tidak valid. Contoh: nama123 atau nama123@pakasir.dev");
-        return;
-      }
-    } else {
-      email = await generateRandomEmail();
-    }
-
+async function handleGenerateRandom() {
+  try {
+    setButtonState(true);
+    const email = await generateRandomEmail();
     setActiveEmail(email);
     await loadInbox(email);
     startAutoRefresh();
   } catch (err) {
-    console.error("Generate email failed:", err);
-    alert("Failed to fetch. Cek API / Worker / CORS.");
+    console.error(err);
+    alert("Failed to generate email.");
   } finally {
-    setLoadingState(false);
+    setButtonState(false);
   }
 }
 
-async function handleCheckEmails() {
-  const domain = domainSelect?.value || DEFAULT_DOMAIN;
-  const typed = emailInput.value.trim();
+async function handleCreateCustom() {
+  const typed = customNameInput.value.trim();
+  const domain = domainSelect.value || DEFAULT_DOMAIN;
 
   if (!typed) {
-    alert("Masukkan nama email atau alamat email penuh.");
+    alert("Masukkan nama email custom dulu.");
     return;
   }
 
   const email = normalizeEmailInput(typed, domain);
 
   if (!isValidTempAddress(email)) {
-    alert("Email tidak valid. Gunakan domain @pakasir.dev");
+    alert("Format tidak valid. Contoh: john123 atau john123@pakasir.dev");
     return;
   }
 
@@ -233,35 +243,95 @@ async function handleCheckEmails() {
   startAutoRefresh();
 }
 
-async function copyCurrentEmail() {
-  if (!currentEmail) return;
+async function handleCheckEmails() {
+  const typedCurrent = currentEmailInput.value.trim();
+  const typedCustom = customNameInput.value.trim();
+  const domain = domainSelect.value || DEFAULT_DOMAIN;
+
+  let email = "";
+
+  if (typedCurrent) {
+    email = normalizeEmailInput(typedCurrent, domain);
+  } else if (typedCustom) {
+    email = normalizeEmailInput(typedCustom, domain);
+  } else if (activeEmail) {
+    email = activeEmail;
+  }
+
+  if (!email || !isValidTempAddress(email)) {
+    alert("Masukkan email yang valid.");
+    return;
+  }
+
+  setActiveEmail(email);
+  await loadInbox(email);
+  startAutoRefresh();
+}
+
+async function handleCopy() {
+  if (!activeEmail) {
+    alert("Belum ada email aktif.");
+    return;
+  }
 
   try {
-    await navigator.clipboard.writeText(currentEmail);
-    alert("Email copied!");
+    await navigator.clipboard.writeText(activeEmail);
+    alert("Email copied.");
   } catch (err) {
-    console.error("Copy failed:", err);
+    console.error(err);
     alert("Gagal copy email.");
   }
 }
 
-function startAutoRefresh() {
-  if (refreshInterval) clearInterval(refreshInterval);
+function toggleAutoRefresh() {
+  autoRefreshEnabled = !autoRefreshEnabled;
 
-  refreshInterval = setInterval(() => {
-    if (currentEmail) {
-      loadInbox(currentEmail);
-    }
+  if (autoRefreshEnabled) {
+    startAutoRefresh();
+    autoRefreshBtn.classList.add("active");
+    autoRefreshBtn.title = "Auto Refresh ON (10s)";
+  } else {
+    stopAutoRefresh();
+    autoRefreshBtn.classList.remove("active");
+    autoRefreshBtn.title = "Auto Refresh OFF";
+  }
+}
+
+function startAutoRefresh() {
+  stopAutoRefresh();
+
+  if (!autoRefreshEnabled) return;
+
+  autoRefreshBtn.classList.add("active");
+  autoRefreshTimer = setInterval(() => {
+    if (activeEmail) loadInbox(activeEmail);
   }, 10000);
 }
 
-function bindEvents() {
-  if (generateBtn) generateBtn.addEventListener("click", handleGenerateEmail);
-  if (checkBtn) checkBtn.addEventListener("click", handleCheckEmails);
-  if (refreshBtn) refreshBtn.addEventListener("click", () => currentEmail && loadInbox(currentEmail));
-  if (copyBtn) copyBtn.addEventListener("click", copyCurrentEmail);
+function stopAutoRefresh() {
+  if (autoRefreshTimer) {
+    clearInterval(autoRefreshTimer);
+    autoRefreshTimer = null;
+  }
+}
 
-  emailInput.addEventListener("keydown", async (e) => {
+function bindEvents() {
+  generateBtn.addEventListener("click", handleGenerateRandom);
+  createCustomBtn.addEventListener("click", handleCreateCustom);
+  checkEmailsBtn.addEventListener("click", handleCheckEmails);
+  copyBtn.addEventListener("click", handleCopy);
+  refreshBtn.addEventListener("click", handleGenerateRandom);
+  refreshEmailsBtn.addEventListener("click", () => activeEmail && loadInbox(activeEmail));
+  autoRefreshBtn.addEventListener("click", toggleAutoRefresh);
+
+  customNameInput.addEventListener("keydown", async (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      await handleCreateCustom();
+    }
+  });
+
+  currentEmailInput.addEventListener("keydown", async (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
       await handleCheckEmails();
@@ -281,7 +351,8 @@ async function init() {
     return;
   }
 
-  renderEmptyInbox();
+  autoRefreshBtn.classList.add("active");
+  showNoEmails(true);
 }
 
 document.addEventListener("DOMContentLoaded", init);
