@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Login</title>
+</head>
+<body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;">
+  <div>
+    <h2>Enter Password</h2>
+    <input type="password" id="password" placeholder="Password">
+    <button onclick="login()">Login</button>
+    <p id="error" style="color:red;"></p>
+  </div>
+
+<script>
+function login() {
+  const pass = document.getElementById("password").value;
+
+  if (pass === "Ngapain@220219") {
+    document.cookie = "auth=true; path=/";
+    window.location.href = "/";
+  } else {
+    document.getElementById("error").innerText = "Wrong password";
+  }
+}
+</script>
+</body>
+</html>
