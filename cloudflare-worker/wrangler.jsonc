@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pakasir-mail-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-04-09",
+  "workers_dev": true,
+  "vars": {
+    "ALLOWED_DOMAINS": "pakasir.dev",
+    "CORS_ORIGIN": "https://www.pakasir.dev",
+    "EMAIL_EXPIRATION_HOURS": "24",
+    "MAX_EMAILS_PER_ADDRESS": "50"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pakasir-tempmail",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "0 * * * *"
+    ]
+  },
+  "observability": {
+    "enabled": true
+  }
+}
