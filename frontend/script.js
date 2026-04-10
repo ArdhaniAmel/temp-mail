@@ -33,12 +33,12 @@ const unreadEmails = document.getElementById("unreadEmails");
 
 const loadingEmails = document.getElementById("loadingEmails");
 const noEmails = document.getElementById("noEmails");
+const emailsList = document.getElementById("emailsList");
 const emailModal = document.getElementById("emailModal");
 const emailModalBackdrop = document.getElementById("emailModalBackdrop");
 const emailModalTitle = document.getElementById("emailModalTitle");
 const emailModalBody = document.getElementById("emailModalBody");
 const closeEmailModalBtn = document.getElementById("closeEmailModal");
-const emailsList = document.getElementById("emailsList");
 
 let activeEmail = "";
 let autoRefreshTimer = null;
@@ -376,25 +376,25 @@ function renderEmails(emails, stats = null) {
       </div>
 
       <div class="email-actions-row">
-          ${otp ? `<div class="otp-badge">OTP: ${otp}</div>` : ""}
-          ${verifyLink ? `
-             <a href="${verifyLink}" target="_blank" rel="noopener noreferrer" class="verify-link-btn">
-                 🔗 Open Verification Link
-             </a>
-          ` : ""}
-          <button type="button" class="open-email-btn">📩 Open Email</button>
+        ${otp ? `<div class="otp-badge">OTP: ${otp}</div>` : ""}
+        ${verifyLink ? `
+          <a href="${verifyLink}" target="_blank" rel="noopener noreferrer" class="verify-link-btn">
+            🔗 Open Verification Link
+          </a>
+        ` : ""}
+        <button type="button" class="open-email-btn">📩 Open Email</button>
       </div>
-                   
+
       <div class="email-item-body">
-          <div class="email-text">${body}</div>
+        <div class="email-text">${body}</div>
       </div>
     `;
 
     const openBtn = item.querySelector(".open-email-btn");
     if (openBtn) {
       openBtn.addEventListener("click", () => {
-           openEmailModal(mail.subject || "Email Detail", mail);
-      });           
+        openEmailModal(mail.subject || "Email Detail", mail);
+      });
     }
 
     if (otp) {
@@ -410,6 +410,7 @@ function renderEmails(emails, stats = null) {
 
     emailsList.appendChild(item);
   });
+}
 
 async function handleGenerateRandom() {
   try {
