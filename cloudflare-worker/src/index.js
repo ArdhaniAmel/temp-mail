@@ -58,21 +58,19 @@ function toSafeString(value) {
 function stripHtml(html = '') {
   let text = String(html || '');
 
-  // remove style & script
+  text = text.replace(/<head[\s\S]*?<\/head>/gi, ' ');
   text = text.replace(/<style[\s\S]*?<\/style>/gi, ' ');
   text = text.replace(/<script[\s\S]*?<\/script>/gi, ' ');
 
-  // important line breaks
   text = text.replace(/<br\s*\/?>/gi, '\n');
   text = text.replace(/<\/p>/gi, '\n');
   text = text.replace(/<\/div>/gi, '\n');
   text = text.replace(/<\/tr>/gi, '\n');
+  text = text.replace(/<\/li>/gi, '\n');
   text = text.replace(/<\/h[1-6]>/gi, '\n');
 
-  // remove all html tags
   text = text.replace(/<[^>]+>/g, ' ');
 
-  // decode entities
   text = text
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
@@ -81,7 +79,10 @@ function stripHtml(html = '') {
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'");
 
-  // cleanup
+  text = text.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  text = text.replace(/@[a-z-]+\s+[^{]+\{[\s\S]*?\}/gi, ' ');
+  text = text.replace(/[{};]/g, ' ');
+
   text = text.replace(/\r/g, '');
   text = text.replace(/\t/g, ' ');
   text = text.replace(/\n{3,}/g, '\n\n');
@@ -89,6 +90,30 @@ function stripHtml(html = '') {
   text = text.trim();
 
   return text;
+}
+
+function cleanEmailText(text = '') {
+  let value = String(text || '');
+
+  value = value.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  value = value.replace(/@media[^{]+\{[\s\S]*?\}\s*\}/gi, ' ');
+  value = value.replace(/@font-face\s*\{[\s\S]*?\}/gi, ' ');
+  value = value.replace(/[a-z-]+\s*:\s*[^;]+;/gi, ' ');
+  value = value.replace(/[{}]/g, ' ');
+
+  value = value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+
+  value = value.replace(/\r/g, '');
+  value = value.replace(/\t/g, ' ');
+  value = value.replace(/\n{3,}/g, '\n\n');
+  value = value.replace(/[ ]{2,}/g, ' ');
+  return value.trim();
 }
 
 function makeSnippet(text = '', html = '') {
@@ -248,8 +273,13 @@ async function storeIncomingEmail(message, env) {
   const subject = toSafeString(parsed.subject || headerValue(message.headers, 'subject')).trim();
   const rawText = toSafeString(parsed.text).trim();
   const rawHtml = toSafeString(parsed.html).trim();
+  const cleanedTextFromText = cleanEmailText(rawText);
+  const cleanedTextFromHtml = stripHtml(rawHtml);
   // 🔥 INI KUNCI NYA
-  const finalText = rawText || stripHtml(rawHtml);
+  const finalText =
+       cleanedTextFromHtml.length > cleanedTextFromText.length
+          ? cleanedTextFromHtml
+          : cleanedTextFromText;
   const sender = normalizeEmailAddress(parsed.from?.address || message.from || headerValue(message.headers, 'reply-to'));
   const senderName = toSafeString(parsed.from?.name || '').trim();
   const receivedAt = new Date().toISOString();
@@ -258,13 +288,13 @@ async function storeIncomingEmail(message, env) {
   const otpCode = extractOtpCode(subject, finalText, rawHtml);
   const upstreamMessageId = headerValue(message.headers, 'message-id').trim();
   const dedupeHash = await sha256Hex([
-    recipient,
-    sender,
-    upstreamMessageId,
-    subject,
-    snippet,
-    bodyText.slice(0, 400),
-    bodyHtml.slice(0, 400)
+      recipient,
+      sender,
+      upstreamMessageId,
+      subject,
+      snippet,
+      finalText.slice(0, 400),
+      rawHtml.slice(0, 400)
   ].join('|'));
 
   const existing = await env.DB.prepare(
