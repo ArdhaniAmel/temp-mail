@@ -375,13 +375,6 @@ function renderEmails(emails, stats = null) {
         <div class="email-item-date">${received}</div>
       </div>
 
-    const openBtn = item.querySelector(".open-email-btn");
-    if (openBtn) {
-      openBtn.addEventListener("click", () => {
-           openEmailModal(mail.subject || "Email Detail", mail);
-      });           
-    }
-
       <div class="email-actions-row">
           ${otp ? `<div class="otp-badge">OTP: ${otp}</div>` : ""}
           ${verifyLink ? `
@@ -397,6 +390,13 @@ function renderEmails(emails, stats = null) {
       </div>
     `;
 
+    const openBtn = item.querySelector(".open-email-btn");
+    if (openBtn) {
+      openBtn.addEventListener("click", () => {
+           openEmailModal(mail.subject || "Email Detail", mail);
+      });           
+    }
+
     if (otp) {
       item.addEventListener("dblclick", async () => {
         try {
@@ -410,7 +410,6 @@ function renderEmails(emails, stats = null) {
 
     emailsList.appendChild(item);
   });
-}
 
 async function handleGenerateRandom() {
   try {
