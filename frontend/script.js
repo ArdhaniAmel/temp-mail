@@ -33,6 +33,11 @@ const unreadEmails = document.getElementById("unreadEmails");
 
 const loadingEmails = document.getElementById("loadingEmails");
 const noEmails = document.getElementById("noEmails");
+const emailModal = document.getElementById("emailModal");
+const emailModalBackdrop = document.getElementById("emailModalBackdrop");
+const emailModalTitle = document.getElementById("emailModalTitle");
+const emailModalBody = document.getElementById("emailModalBody");
+const closeEmailModalBtn = document.getElementById("closeEmailModal");
 const emailsList = document.getElementById("emailsList");
 
 let activeEmail = "";
@@ -92,6 +97,39 @@ function extractFirstLink(text = '') {
   );
 
   return priority || matches[0] || '';
+}
+
+function openEmailModal(title, mail) {
+  if (!emailModal || !emailModalTitle || !emailModalBody) return;
+
+  emailModalTitle.textContent = title || "Email Detail";
+  emailModalBody.innerHTML = "";
+
+  if (mail.body_html && mail.body_html.trim()) {
+    const iframe = document.createElement("iframe");
+    iframe.className = "email-html-frame";
+    iframe.setAttribute("sandbox", "allow-popups allow-popups-to-escape-sandbox");
+    iframe.setAttribute("referrerpolicy", "no-referrer");
+    emailModalBody.appendChild(iframe);
+
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(mail.body_html);
+    doc.close();
+  } else {
+    const pre = document.createElement("pre");
+    pre.className = "email-modal-text";
+    pre.textContent = mail.body_text || mail.snippet || "(No content)";
+    emailModalBody.appendChild(pre);
+  }
+
+  emailModal.style.display = "block";
+}
+
+function closeEmailModal() {
+  if (!emailModal || !emailModalBody) return;
+  emailModal.style.display = "none";
+  emailModalBody.innerHTML = "";
 }
 
 function normalizeEmailInput(value, selectedDomain = DEFAULT_DOMAIN) {
@@ -336,13 +374,23 @@ function renderEmails(emails, stats = null) {
         </div>
         <div class="email-item-date">${received}</div>
       </div>
-      ${otp ? `<div class="otp-badge">OTP: ${otp}</div>` : ""}
-      ${verifyLink ? `
-         <div class="email-actions-row">
-              <a href="${verifyLink}" target="_blank" rel="noopener noreferrer" class="verify-link-btn">
-                   🔗 Open Verification Link
-              </a>
-      ` : ""}
+
+    const openBtn = item.querySelector(".open-email-btn");
+    if (openBtn) {
+      openBtn.addEventListener("click", () => {
+           openEmailModal(mail.subject || "Email Detail", mail);
+      });           
+    }
+
+      <div class="email-actions-row">
+          ${otp ? `<div class="otp-badge">OTP: ${otp}</div>` : ""}
+          ${verifyLink ? `
+             <a href="${verifyLink}" target="_blank" rel="noopener noreferrer" class="verify-link-btn">
+                 🔗 Open Verification Link
+             </a>
+          ` : ""}
+          <button type="button" class="open-email-btn">📩 Open Email</button>
+      </div>
                    
       <div class="email-item-body">
           <div class="email-text">${body}</div>
@@ -504,6 +552,19 @@ function bindEvents() {
     if (document.visibilityState === "visible" && activeEmail) {
       loadInbox(activeEmail, { retries: 1, retryDelay: 800 });
     }
+  });
+
+  if (closeEmailModalBtn) {
+    closeEmailModalBtn.addEventListener("click", closeEmailModal);
+  }
+  if (emailModalBackdrop) {
+    emailModalBackdrop.addEventListener("click", closeEmailModal);
+  }
+
+  document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        closeEmailModal();
+      }
   });
 }
 
