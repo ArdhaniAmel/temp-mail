@@ -1,9 +1,13 @@
 const API_BASE =
   (window.APP_CONFIG && window.APP_CONFIG.apiBaseUrl)
     ? window.APP_CONFIG.apiBaseUrl
-    : "https://mailapi.pakasir.dev/api";
+    : ((window.TEMPMAIL_CONFIG && window.TEMPMAIL_CONFIG.apiBase)
+        ? window.TEMPMAIL_CONFIG.apiBase
+        : "https://mailapi.pakasir.dev/api");
 
 const DEFAULT_DOMAIN = "pakasir.dev";
+const AUTO_REFRESH_MS =
+  (window.TEMPMAIL_CONFIG && Number(window.TEMPMAIL_CONFIG.autoRefreshMs)) || 10000;
 
 const currentEmailInput = document.getElementById("currentEmail");
 const customNameInput = document.getElementById("customNameInput");
@@ -34,6 +38,7 @@ const emailsList = document.getElementById("emailsList");
 let activeEmail = "";
 let autoRefreshTimer = null;
 let autoRefreshEnabled = true;
+let lastSeenEmailId = "";
 
 function escapeHtml(str = "") {
   return String(str)
@@ -42,6 +47,18 @@ function escapeHtml(str = "") {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function decodeEntities(str = "") {
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = str;
+  return textarea.value;
+}
+
+function stripHtml(html = "") {
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
 }
 
 function normalizeEmailInput(value, selectedDomain = DEFAULT_DOMAIN) {
@@ -113,6 +130,10 @@ function setActiveEmail(email) {
   setExpiration();
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function fetchJson(url, options = {}) {
   const res = await fetch(url, options);
 
@@ -153,7 +174,28 @@ async function generateRandomEmail() {
   return data;
 }
 
-async function loadInbox(email) {
+async function fetchInboxBundle(email) {
+  const [inboxData, statsData] = await Promise.all([
+    fetchJson(`${API_BASE}/emails/${encodeURIComponent(email)}`, {
+      method: "GET",
+      headers: { Accept: "application/json" }
+    }),
+    fetchJson(`${API_BASE}/stats/${encodeURIComponent(email)}`, {
+      method: "GET",
+      headers: { Accept: "application/json" }
+    })
+  ]);
+
+  return {
+    emails: inboxData.emails || [],
+    stats: statsData.stats || {
+      total_emails: (inboxData.emails || []).length,
+      unread_emails: (inboxData.emails || []).length
+    }
+  };
+}
+
+async function loadInbox(email, opts = {}) {
   if (!email || !isValidTempAddress(email)) {
     emailsList.innerHTML = "";
     showNoEmails(true);
@@ -163,34 +205,32 @@ async function loadInbox(email) {
     return;
   }
 
+  const retries = Number.isFinite(opts.retries) ? opts.retries : 0;
+  const retryDelay = Number.isFinite(opts.retryDelay) ? opts.retryDelay : 1500;
+
   try {
     setButtonState(true);
     showLoading(true);
     showNoEmails(false);
 
-    const inboxData = await fetchJson(
-      `${API_BASE}/emails/${encodeURIComponent(email)}`,
-      {
-        method: "GET",
-        headers: { Accept: "application/json" }
+    let lastError = null;
+    let result = null;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        result = await fetchInboxBundle(email);
+        break;
+      } catch (err) {
+        lastError = err;
+        if (attempt < retries) {
+          await wait(retryDelay);
+        }
       }
-    );
+    }
 
-    const statsData = await fetchJson(
-      `${API_BASE}/stats/${encodeURIComponent(email)}`,
-      {
-        method: "GET",
-        headers: { Accept: "application/json" }
-      }
-    );
+    if (!result) throw lastError || new Error("Failed to fetch inbox");
 
-    const emails = inboxData.emails || [];
-    const stats = statsData.stats || {
-      total_emails: emails.length,
-      unread_emails: emails.length
-    };
-
-    renderEmails(emails, stats);
+    renderEmails(result.emails, result.stats);
   } catch (err) {
     console.error("Failed to load inbox:", err);
     emailsList.innerHTML = `
@@ -210,6 +250,15 @@ async function loadInbox(email) {
   }
 }
 
+function getPreviewText(mail) {
+  return (
+    mail.snippet ||
+    mail.body_text ||
+    stripHtml(mail.body_html || "") ||
+    "(No content)"
+  );
+}
+
 function renderEmails(emails, stats = null) {
   emailsList.innerHTML = "";
 
@@ -221,20 +270,28 @@ function renderEmails(emails, stats = null) {
   emailCount.textContent = String(total);
 
   if (!emails || emails.length === 0) {
+    lastSeenEmailId = "";
     showNoEmails(true);
     return;
   }
 
   showNoEmails(false);
 
+  const newestId = emails[0]?.email_id || "";
+  if (newestId && newestId !== lastSeenEmailId && lastSeenEmailId) {
+    document.title = `(${emails.length}) New mail - TempMail`;
+  }
+  lastSeenEmailId = newestId;
+
   emails.forEach((mail) => {
     const item = document.createElement("div");
     item.className = "email-item";
 
-    const sender = escapeHtml(mail.sender || "Unknown sender");
+    const sender = escapeHtml(mail.sender_name || mail.sender || "Unknown sender");
     const subject = escapeHtml(mail.subject || "(No subject)");
-    const body = escapeHtml(mail.body_text || "");
+    const body = escapeHtml(getPreviewText(mail));
     const received = formatDate(mail.received_at || "");
+    const otp = escapeHtml(mail.otp_code || "");
 
     item.innerHTML = `
       <div class="email-item-header">
@@ -244,10 +301,22 @@ function renderEmails(emails, stats = null) {
         </div>
         <div class="email-item-date">${received}</div>
       </div>
+      ${otp ? `<div class="otp-badge">OTP: ${otp}</div>` : ""}
       <div class="email-item-body">
         <pre>${body}</pre>
       </div>
     `;
+
+    if (otp) {
+      item.addEventListener("dblclick", async () => {
+        try {
+          await navigator.clipboard.writeText(mail.otp_code);
+          alert(`OTP copied: ${mail.otp_code}`);
+        } catch {
+          // ignore
+        }
+      });
+    }
 
     emailsList.appendChild(item);
   });
@@ -262,7 +331,7 @@ async function handleGenerateRandom() {
 
     setActiveEmail(email);
     setExpiration(result.expires_at || null);
-    await loadInbox(email);
+    await loadInbox(email, { retries: 1, retryDelay: 1000 });
     startAutoRefresh();
   } catch (err) {
     console.error(err);
@@ -289,7 +358,7 @@ async function handleCreateCustom() {
   }
 
   setActiveEmail(email);
-  await loadInbox(email);
+  await loadInbox(email, { retries: 1, retryDelay: 1000 });
   startAutoRefresh();
 }
 
@@ -314,7 +383,7 @@ async function handleCheckEmails() {
   }
 
   setActiveEmail(email);
-  await loadInbox(email);
+  await loadInbox(email, { retries: 2, retryDelay: 1500 });
   startAutoRefresh();
 }
 
@@ -339,7 +408,7 @@ function toggleAutoRefresh() {
   if (autoRefreshEnabled) {
     startAutoRefresh();
     autoRefreshBtn.classList.add("active");
-    autoRefreshBtn.title = "Auto Refresh ON (10s)";
+    autoRefreshBtn.title = `Auto Refresh ON (${Math.round(AUTO_REFRESH_MS / 1000)}s)`;
   } else {
     stopAutoRefresh();
     autoRefreshBtn.classList.remove("active");
@@ -353,9 +422,10 @@ function startAutoRefresh() {
   if (!autoRefreshEnabled) return;
 
   autoRefreshBtn.classList.add("active");
+  autoRefreshBtn.title = `Auto Refresh ON (${Math.round(AUTO_REFRESH_MS / 1000)}s)`;
   autoRefreshTimer = setInterval(() => {
-    if (activeEmail) loadInbox(activeEmail);
-  }, 10000);
+    if (activeEmail) loadInbox(activeEmail, { retries: 1, retryDelay: 800 });
+  }, AUTO_REFRESH_MS);
 }
 
 function stopAutoRefresh() {
@@ -371,7 +441,7 @@ function bindEvents() {
   checkEmailsBtn.addEventListener("click", handleCheckEmails);
   copyBtn.addEventListener("click", handleCopy);
   refreshBtn.addEventListener("click", handleGenerateRandom);
-  refreshEmailsBtn.addEventListener("click", () => activeEmail && loadInbox(activeEmail));
+  refreshEmailsBtn.addEventListener("click", () => activeEmail && loadInbox(activeEmail, { retries: 2, retryDelay: 1200 }));
   autoRefreshBtn.addEventListener("click", toggleAutoRefresh);
 
   customNameInput.addEventListener("keydown", async (e) => {
@@ -387,6 +457,12 @@ function bindEvents() {
       await handleCheckEmails();
     }
   });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && activeEmail) {
+      loadInbox(activeEmail, { retries: 1, retryDelay: 800 });
+    }
+  });
 }
 
 async function init() {
@@ -396,12 +472,13 @@ async function init() {
 
   if (emailFromUrl) {
     setActiveEmail(emailFromUrl);
-    await loadInbox(emailFromUrl);
+    await loadInbox(emailFromUrl, { retries: 2, retryDelay: 1200 });
     startAutoRefresh();
     return;
   }
 
   autoRefreshBtn.classList.add("active");
+  autoRefreshBtn.title = `Auto Refresh ON (${Math.round(AUTO_REFRESH_MS / 1000)}s)`;
   showNoEmails(true);
 }
 

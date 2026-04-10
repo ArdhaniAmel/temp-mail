@@ -51,6 +51,64 @@ function isAllowedEmail(email, env) {
   return getAllowedDomains(env).includes(domain);
 }
 
+function toSafeString(value) {
+  return typeof value === 'string' ? value : '';
+}
+
+function stripHtml(html = '') {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n\s+/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function makeSnippet(text = '', html = '') {
+  const source = toSafeString(text).trim() || stripHtml(html);
+  return source.replace(/\s+/g, ' ').trim().slice(0, 220);
+}
+
+function extractOtpCode(subject = '', text = '', html = '') {
+  const combined = [subject, text, stripHtml(html)].filter(Boolean).join('\n');
+  const patterns = [
+    /\b(\d{6})\b/,
+    /\b(\d{5})\b/,
+    /\b(\d{4})\b/,
+    /\b([A-Z0-9]{6,8})\b/
+  ];
+
+  for (const pattern of patterns) {
+    const match = combined.match(pattern);
+    if (match) return match[1];
+  }
+  return '';
+}
+
+async function sha256Hex(input) {
+  const bytes = new TextEncoder().encode(String(input));
+  const hash = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function headerValue(headers, name) {
+  try {
+    return headers.get(name) || '';
+  } catch {
+    return '';
+  }
+}
+
 async function ensureCapacity(recipient, env) {
   const maxEmails = Number(env.MAX_EMAILS_PER_ADDRESS || 50);
   const countRow = await env.DB.prepare(
@@ -77,7 +135,17 @@ async function deleteEmailById(id, env) {
 
 async function listEmails(recipient, env) {
   const result = await env.DB.prepare(`
-    SELECT id AS email_id, recipient, sender, subject, body_text, body_html, received_at, is_read
+    SELECT id AS email_id,
+           recipient,
+           sender,
+           sender_name,
+           subject,
+           snippet,
+           otp_code,
+           body_text,
+           body_html,
+           received_at,
+           is_read
     FROM emails
     WHERE recipient = ?1
     ORDER BY received_at DESC
@@ -87,7 +155,17 @@ async function listEmails(recipient, env) {
 
 async function getEmail(recipient, id, env) {
   const email = await env.DB.prepare(`
-    SELECT id AS email_id, recipient, sender, subject, body_text, body_html, received_at, is_read
+    SELECT id AS email_id,
+           recipient,
+           sender,
+           sender_name,
+           subject,
+           snippet,
+           otp_code,
+           body_text,
+           body_html,
+           received_at,
+           is_read
     FROM emails
     WHERE recipient = ?1 AND id = ?2
     LIMIT 1
@@ -138,50 +216,98 @@ async function parseIncomingEmail(message) {
   return parsed;
 }
 
+async function storeIncomingEmail(message, env) {
+  const recipient = normalizeEmailAddress(message.to);
+  if (!isAllowedEmail(recipient, env)) {
+    message.setReject('Mailbox not allowed for this domain.');
+    return { stored: false, reason: 'not_allowed' };
+  }
+
+  const parsed = await parseIncomingEmail(message);
+  await ensureCapacity(recipient, env);
+
+  const subject = toSafeString(parsed.subject || headerValue(message.headers, 'subject')).trim();
+  const bodyText = toSafeString(parsed.text).trim();
+  const bodyHtml = toSafeString(parsed.html).trim();
+  const sender = normalizeEmailAddress(parsed.from?.address || message.from || headerValue(message.headers, 'reply-to'));
+  const senderName = toSafeString(parsed.from?.name || '').trim();
+  const receivedAt = new Date().toISOString();
+  const rawHeaders = JSON.stringify(Object.fromEntries(message.headers));
+  const snippet = makeSnippet(bodyText, bodyHtml);
+  const otpCode = extractOtpCode(subject, bodyText, bodyHtml);
+  const upstreamMessageId = headerValue(message.headers, 'message-id').trim();
+  const dedupeHash = await sha256Hex([
+    recipient,
+    sender,
+    upstreamMessageId,
+    subject,
+    snippet,
+    bodyText.slice(0, 400),
+    bodyHtml.slice(0, 400)
+  ].join('|'));
+
+  const existing = await env.DB.prepare(
+    'SELECT id FROM emails WHERE dedupe_hash = ?1 LIMIT 1'
+  ).bind(dedupeHash).first();
+
+  if (existing?.id) {
+    return { stored: false, reason: 'duplicate', id: existing.id };
+  }
+
+  const emailId = crypto.randomUUID();
+
+  await env.DB.prepare(`
+    INSERT INTO emails (
+      id, recipient, sender, sender_name, subject, snippet, otp_code,
+      body_text, body_html, received_at, is_read, raw_headers,
+      upstream_message_id, dedupe_hash
+    )
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?11, ?12, ?13)
+  `).bind(
+    emailId,
+    recipient,
+    sender,
+    senderName,
+    subject,
+    snippet,
+    otpCode,
+    bodyText,
+    bodyHtml,
+    receivedAt,
+    rawHeaders,
+    upstreamMessageId,
+    dedupeHash
+  ).run();
+
+  const attachments = Array.isArray(parsed.attachments) ? parsed.attachments : [];
+  for (const attachment of attachments) {
+    await env.DB.prepare(`
+      INSERT INTO attachments (id, email_id, filename, content_type, size)
+      VALUES (?1, ?2, ?3, ?4, ?5)
+    `).bind(
+      crypto.randomUUID(),
+      emailId,
+      attachment.filename || 'attachment',
+      attachment.mimeType || 'application/octet-stream',
+      Number(attachment.content?.byteLength || attachment.size || 0)
+    ).run();
+  }
+
+  return { stored: true, id: emailId };
+}
+
 export default {
   async email(message, env, ctx) {
-    const recipient = normalizeEmailAddress(message.to);
-    if (!isAllowedEmail(recipient, env)) {
-      message.setReject('Mailbox not allowed for this domain.');
-      return;
-    }
-
-    const parsed = await parseIncomingEmail(message);
-    await ensureCapacity(recipient, env);
-
-    const emailId = crypto.randomUUID();
-    const subject = parsed.subject || message.headers.get('subject') || '';
-    const bodyText = parsed.text || '';
-    const bodyHtml = parsed.html || '';
-    const sender = parsed.from?.address || message.from || '';
-    const receivedAt = new Date().toISOString();
-
-    await env.DB.prepare(`
-      INSERT INTO emails (id, recipient, sender, subject, body_text, body_html, received_at, is_read, raw_headers)
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)
-    `).bind(
-      emailId,
-      recipient,
-      sender,
-      subject,
-      bodyText,
-      bodyHtml,
-      receivedAt,
-      JSON.stringify(Object.fromEntries(message.headers))
-    ).run();
-
-    const attachments = Array.isArray(parsed.attachments) ? parsed.attachments : [];
-    for (const attachment of attachments) {
-      await env.DB.prepare(`
-        INSERT INTO attachments (id, email_id, filename, content_type, size)
-        VALUES (?1, ?2, ?3, ?4, ?5)
-      `).bind(
-        crypto.randomUUID(),
-        emailId,
-        attachment.filename || 'attachment',
-        attachment.mimeType || 'application/octet-stream',
-        Number(attachment.content?.byteLength || attachment.size || 0)
-      ).run();
+    try {
+      const result = await storeIncomingEmail(message, env);
+      console.log('incoming_email', JSON.stringify({
+        to: normalizeEmailAddress(message.to),
+        from: normalizeEmailAddress(message.from),
+        result
+      }));
+    } catch (error) {
+      console.error('email_handler_failed', error?.stack || String(error));
+      throw error;
     }
   },
 

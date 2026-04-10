@@ -14,7 +14,7 @@
     {
       "binding": "DB",
       "database_name": "pakasir-tempmail",
-      "database_id": "63d442c0-facf-47fc-baf1-9de8633e67a1"
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
     }
   ],
   "triggers": {
