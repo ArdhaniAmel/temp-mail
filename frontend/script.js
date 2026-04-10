@@ -61,6 +61,39 @@ function stripHtml(html = "") {
   return (tmp.textContent || tmp.innerText || "").replace(/\s+/g, " ").trim();
 }
 
+function normalizeTextLinks(text = '') {
+  return String(text || '')
+    .replace(/=\r?\n/g, '') // fix email wrapped lines
+    .replace(/\r/g, '');
+}
+
+function linkifyText(text = '') {
+  const normalized = normalizeTextLinks(text);
+
+  // escape dulu
+  let safe = escapeHtml(normalized);
+
+  // ubah URL jadi <a>
+  safe = safe.replace(
+    /(https?:\/\/[^\s<>"']+)/g,
+    '<a href="$1" target="_blank" rel="noopener noreferrer" class="email-link">$1</a>'
+  );
+
+  return safe;
+}
+
+function extractFirstLink(text = '') {
+  const normalized = normalizeTextLinks(text);
+  const matches = normalized.match(/https?:\/\/[^\s<>"']+/gi) || [];
+
+  // prioritaskan link verifikasi
+  const priority = matches.find(url =>
+    /verify|confirm|activate|auth|login|signin/i.test(url)
+  );
+
+  return priority || matches[0] || '';
+}
+
 function normalizeEmailInput(value, selectedDomain = DEFAULT_DOMAIN) {
   const raw = (value || "").trim().toLowerCase();
   if (!raw) return "";
@@ -289,7 +322,9 @@ function renderEmails(emails, stats = null) {
 
     const sender = escapeHtml(mail.sender_name || mail.sender || "Unknown sender");
     const subject = escapeHtml(mail.subject || "(No subject)");
-    const body = escapeHtml(getPreviewText(mail));
+    const previewText = getPreviewText(mail);
+    const body = linkifyText(previewText);
+    const verifyLink = extractFirstLink(previewText);
     const received = formatDate(mail.received_at || "");
     const otp = escapeHtml(mail.otp_code || "");
 
@@ -302,8 +337,15 @@ function renderEmails(emails, stats = null) {
         <div class="email-item-date">${received}</div>
       </div>
       ${otp ? `<div class="otp-badge">OTP: ${otp}</div>` : ""}
+      ${verifyLink ? `
+         <div class="email-actions-row">
+              <a href="${verifyLink}" target="_blank" rel="noopener noreferrer" class="verify-link-btn">
+                   🔗 Open Verification Link
+              </a>
+      ` : ""}
+                   
       <div class="email-item-body">
-        <pre>${body}</pre>
+          <div class="email-text">${body}</div>
       </div>
     `;
 
