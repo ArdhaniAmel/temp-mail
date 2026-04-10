@@ -56,20 +56,39 @@ function toSafeString(value) {
 }
 
 function stripHtml(html = '') {
-  return String(html || '')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
+  let text = String(html || '');
+
+  // remove style & script
+  text = text.replace(/<style[\s\S]*?<\/style>/gi, ' ');
+  text = text.replace(/<script[\s\S]*?<\/script>/gi, ' ');
+
+  // important line breaks
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<\/p>/gi, '\n');
+  text = text.replace(/<\/div>/gi, '\n');
+  text = text.replace(/<\/tr>/gi, '\n');
+  text = text.replace(/<\/h[1-6]>/gi, '\n');
+
+  // remove all html tags
+  text = text.replace(/<[^>]+>/g, ' ');
+
+  // decode entities
+  text = text
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
-    .replace(/\s+\n/g, '\n')
-    .replace(/\n\s+/g, '\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim();
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'");
+
+  // cleanup
+  text = text.replace(/\r/g, '');
+  text = text.replace(/\t/g, ' ');
+  text = text.replace(/\n{3,}/g, '\n\n');
+  text = text.replace(/[ ]{2,}/g, ' ');
+  text = text.trim();
+
+  return text;
 }
 
 function makeSnippet(text = '', html = '') {
@@ -227,14 +246,16 @@ async function storeIncomingEmail(message, env) {
   await ensureCapacity(recipient, env);
 
   const subject = toSafeString(parsed.subject || headerValue(message.headers, 'subject')).trim();
-  const bodyText = toSafeString(parsed.text).trim();
-  const bodyHtml = toSafeString(parsed.html).trim();
+  const rawText = toSafeString(parsed.text).trim();
+  const rawHtml = toSafeString(parsed.html).trim();
+  // 🔥 INI KUNCI NYA
+  const finalText = rawText || stripHtml(rawHtml);
   const sender = normalizeEmailAddress(parsed.from?.address || message.from || headerValue(message.headers, 'reply-to'));
   const senderName = toSafeString(parsed.from?.name || '').trim();
   const receivedAt = new Date().toISOString();
   const rawHeaders = JSON.stringify(Object.fromEntries(message.headers));
-  const snippet = makeSnippet(bodyText, bodyHtml);
-  const otpCode = extractOtpCode(subject, bodyText, bodyHtml);
+  const snippet = makeSnippet(finalText, rawHtml);
+  const otpCode = extractOtpCode(subject, finalText, rawHtml);
   const upstreamMessageId = headerValue(message.headers, 'message-id').trim();
   const dedupeHash = await sha256Hex([
     recipient,
@@ -271,8 +292,8 @@ async function storeIncomingEmail(message, env) {
     subject,
     snippet,
     otpCode,
-    bodyText,
-    bodyHtml,
+    finalText,
+    rawHtml,
     receivedAt,
     rawHeaders,
     upstreamMessageId,
